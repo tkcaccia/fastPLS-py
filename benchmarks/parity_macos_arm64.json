@@ -1,0 +1,33 @@
+{
+  "fastpls_r_version": "0.99.66",
+  "fastpls_core_commit": "3854e369c1f0cd615e58b968b7721efb4b2a3146",
+  "repetitions": 11,
+  "records": [
+    {
+      "method": "simpls",
+      "max_abs_prediction_difference": 1.6653345369377348e-16,
+      "relative_prediction_error": 1.6708089937368276e-15,
+      "classification_agreement": 1.0,
+      "python_median_seconds": 0.0034174169995822012,
+      "r_seconds": 0.0030000000000000027,
+      "python_metrics": {
+        "R2": 0.8716789639330119,
+        "RMSD": 0.00696319896531124,
+        "MAE": 0.005747956766943903
+      }
+    },
+    {
+      "method": "plssvd",
+      "max_abs_prediction_difference": 5.447031714567174e-16,
+      "relative_prediction_error": 6.632096357333422e-15,
+      "classification_agreement": 1.0,
+      "python_median_seconds": 0.002863166999304667,
+      "r_seconds": 0.0020000000000000018,
+      "python_metrics": {
+        "R2": 0.8715719721337681,
+        "RMSD": 0.00696610125623838,
+        "MAE": 0.0057521820395570345
+      }
+    }
+  ]
+}

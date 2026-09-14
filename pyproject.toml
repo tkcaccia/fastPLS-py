@@ -1,0 +1,35 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13", "numpy>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "fastPLS"
+version = "0.1.0"
+description = "Python bindings for the fastPLS C++ core"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Stefano Cacciatore" }]
+dependencies = ["numpy>=1.23"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+
+[project.urls]
+Homepage = "https://github.com/tkcaccia/fastPLS-py"
+Source = "https://github.com/tkcaccia/fastPLS-py"
+Issues = "https://github.com/tkcaccia/fastPLS-py/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+wheel.packages = ["python/fastpls"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

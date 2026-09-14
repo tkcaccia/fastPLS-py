@@ -1,0 +1,21 @@
+{
+  "dataset": "CIFAR-100 DINOv2 embeddings",
+  "task": "SIMPLS-LDA fit plus prediction",
+  "n_components": 99,
+  "backend": "Apple Accelerate",
+  "repetitions": 7,
+  "python": {
+    "float32_median_seconds": 0.2108884589979425,
+    "float64_median_seconds": 0.31047162500181,
+    "accuracy_float32": 0.8687,
+    "accuracy_float64": 0.8687
+  },
+  "r_reference": {
+    "package_version": "0.99.66",
+    "float32_median_seconds": 0.197,
+    "float64_median_seconds": 0.365,
+    "accuracy_float32": 0.8687,
+    "accuracy_float64": 0.8687
+  },
+  "source_commit": "3854e369c1f0cd615e58b968b7721efb4b2a3146"
+}
