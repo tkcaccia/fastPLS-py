@@ -1,0 +1,10 @@
+name = "fastPLSFormal"
+version = "0.1.0"
+defaultTargets = ["FastPLSFormal"]
+
+[[lean_lib]]
+name = "FastPLSFormal"
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
