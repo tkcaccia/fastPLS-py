@@ -29,5 +29,10 @@ jobs:
           test: false
           lint: false
           use-mathlib-cache: true
-          nanoda: true
-          nanoda-allow-sorry: false
+      - name: Reject incomplete proof placeholders
+        working-directory: formal/lean
+        run: |
+          if grep -n -E '(^|[^[:alnum:]_])(sorry|admit)([^[:alnum:]_]|$)' \
+              FastPLSFormal.lean FastPLSFormal/*.lean; then
+            exit 1
+          fi
