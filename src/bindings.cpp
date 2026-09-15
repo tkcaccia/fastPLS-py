@@ -2,6 +2,7 @@
 #include "native_backend.hpp"
 
 #include <fastpls/core.hpp>
+#include <fastpls/core/cross_validation.hpp>
 
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -42,6 +44,13 @@ Head parse_head(const std::string& value) {
   if (value == "argmax") return Head::argmax;
   if (value == "lda") return Head::lda;
   throw std::invalid_argument("classifier must be None, 'argmax', or 'lda'");
+}
+
+core::LinearPlsFamily cv_family(Family family) {
+  if (family == Family::plssvd) return core::LinearPlsFamily::plssvd;
+  if (family == Family::simpls) return core::LinearPlsFamily::simpls;
+  if (family == Family::opls) return core::LinearPlsFamily::opls;
+  return core::LinearPlsFamily::kernelpls;
 }
 
 core::PredictorScaling parse_scaling(const std::string& value) {
@@ -177,6 +186,7 @@ class ModelBase {
   virtual py::array_t<std::int64_t> predict_classes(
       py::array input, std::size_t top) const = 0;
   virtual py::array scores() const = 0;
+  virtual py::object vip() const = 0;
   virtual std::size_t components() const = 0;
   virtual std::string dtype() const = 0;
   virtual std::string method() const = 0;
@@ -273,6 +283,76 @@ class Model final : public ModelBase {
 
   py::array scores() const override {
     return matrix_to_numpy(training_scores());
+  }
+
+  py::object vip() const override {
+    const auto& scores = training_scores();
+    const core::Matrix<T>* weights = nullptr;
+    const core::Matrix<T>* loadings = nullptr;
+    if (family_ == Family::simpls) {
+      const auto& model = std::get<core::SimplsModel<T>>(model_);
+      weights = &model.weights;
+      loadings = &model.response_loadings;
+    } else if (family_ == Family::plssvd) {
+      const auto& model = std::get<core::PlssvdModel<T>>(model_);
+      weights = &model.weights;
+      loadings = &model.response_loadings;
+    } else if (family_ == Family::opls) {
+      const auto& model = std::get<core::OplsModel<T>>(model_).inner;
+      weights = &model.weights;
+      loadings = &model.response_loadings;
+    } else {
+      const auto& model = std::get<core::KernelPlsModel<T>>(model_).inner;
+      weights = &model.weights;
+      loadings = &model.response_loadings;
+    }
+    if (scores.size() == 0) {
+      throw std::invalid_argument(
+          "VIP requires a model fitted with store_scores=True");
+    }
+    if (scores.columns() != weights->columns() ||
+        loadings->columns() != weights->columns()) {
+      throw std::runtime_error("VIP model component dimensions do not match");
+    }
+    const std::size_t components = weights->columns();
+    const std::size_t predictors = weights->rows();
+    py::list output;
+    for (std::size_t response = 0; response < loadings->rows(); ++response) {
+      py::array_t<double> value({
+          static_cast<py::ssize_t>(components),
+          static_cast<py::ssize_t>(predictors)});
+      auto destination = value.template mutable_unchecked<2>();
+      std::vector<long double> numerator(predictors, 0.0L);
+      long double denominator = 0.0L;
+      for (std::size_t component = 0; component < components; ++component) {
+        long double score_square = 0.0L;
+        long double weight_square = 0.0L;
+        for (std::size_t row = 0; row < scores.rows(); ++row) {
+          const long double current = scores(row, component);
+          score_square += current * current;
+        }
+        for (std::size_t row = 0; row < predictors; ++row) {
+          const long double current = (*weights)(row, component);
+          weight_square += current * current;
+        }
+        const long double loading = (*loadings)(response, component);
+        const long double explained = loading * loading * score_square;
+        denominator += explained;
+        for (std::size_t predictor = 0; predictor < predictors; ++predictor) {
+          const long double weight = (*weights)(predictor, component);
+          if (weight_square > 0.0L) {
+            numerator[predictor] +=
+                weight * weight * explained / weight_square;
+          }
+          destination(component, predictor) = denominator > 0.0L ?
+              std::sqrt(static_cast<double>(
+                  predictors * numerator[predictor] / denominator)) :
+              std::numeric_limits<double>::quiet_NaN();
+        }
+      }
+      output.append(std::move(value));
+    }
+    return loadings->rows() == 1 ? output[0] : py::object(output);
   }
 
   std::size_t components() const override { return components_; }
@@ -738,6 +818,157 @@ py::dict fastsvd(py::array input, int components, int oversample,
       oversample, power, seed);
 }
 
+template<class T>
+py::dict cross_validate_typed(
+    const py::array_t<T, py::array::forcecast>& input, py::handle response,
+    const py::array_t<int, py::array::forcecast>& component_array,
+    const py::array_t<int, py::array::forcecast>& fold_array,
+    const std::string& method, const std::string& classifier,
+    const std::string& scaling, const std::string& selection,
+    int oversample, int power, int seed, int orthogonal_components,
+    const std::string& kernel, double gamma, int degree, double offset,
+    bool store_predictions, bool store_scores) {
+  auto predictors = matrix_from_numpy<T>(input);
+  if (component_array.ndim() != 1 || component_array.size() < 1) {
+    throw std::invalid_argument("components must be a non-empty vector");
+  }
+  if (fold_array.ndim() != 1 ||
+      static_cast<std::size_t>(fold_array.size()) != predictors.rows()) {
+    throw std::invalid_argument("folds must contain one value per sample");
+  }
+  std::vector<int> components(
+      component_array.data(), component_array.data() + component_array.size());
+  std::vector<int> folds(fold_array.data(), fold_array.data() + fold_array.size());
+  if (std::any_of(components.begin(), components.end(),
+                  [](int value) { return value < 1; })) {
+    throw std::invalid_argument("components must contain positive integers");
+  }
+  if (std::any_of(folds.begin(), folds.end(),
+                  [](int value) { return value < 1; })) {
+    throw std::invalid_argument("fold identifiers must be positive integers");
+  }
+
+  const Family family = parse_family(method);
+  const Head head = parse_head(classifier);
+  const auto predictor_scaling = parse_scaling(scaling);
+  const std::size_t maximum_component = static_cast<std::size_t>(
+      *std::max_element(components.begin(), components.end()));
+  core::PlssvdControls plssvd;
+  plssvd.rsvd.oversample = oversample;
+  plssvd.rsvd.power = power;
+  plssvd.rsvd.seed = static_cast<unsigned int>(seed);
+  core::KernelCvControls kernel_cv;
+  kernel_cv.kernel = parse_kernel(kernel);
+  kernel_cv.gamma = gamma;
+  kernel_cv.degree = degree;
+  kernel_cv.offset = offset;
+  NativeBackend<T> backend;
+  const core::LinearPlsFamily effective_family =
+      family == Family::kernelpls && kernel_cv.kernel == core::KernelType::linear ?
+      core::LinearPlsFamily::simpls : cv_family(family);
+
+  py::dict output;
+  output["ncomp"] = components;
+  output["fold"] = folds;
+  if (head != Head::regression) {
+    auto label_array = py::array_t<std::int64_t, py::array::forcecast>::ensure(response);
+    if (!label_array || label_array.ndim() != 1 ||
+        static_cast<std::size_t>(label_array.size()) != predictors.rows()) {
+      throw std::invalid_argument("classification labels must have one value per sample");
+    }
+    std::vector<int> labels(predictors.rows());
+    std::int64_t maximum_label = -1;
+    for (std::size_t row = 0; row < predictors.rows(); ++row) {
+      const auto value = *label_array.data(static_cast<py::ssize_t>(row));
+      if (value < 0) throw std::invalid_argument("class indices must be non-negative");
+      maximum_label = std::max(maximum_label, value);
+      labels[row] = static_cast<int>(value + 1);
+    }
+    const std::size_t classes = static_cast<std::size_t>(maximum_label + 1);
+    auto simpls = simpls_controls(
+        predictors.rows(), predictors.columns(), classes, maximum_component,
+        true, oversample, power, static_cast<unsigned int>(seed));
+    const bool need_scores = store_scores || selection == "q2y";
+    core::ClassificationCvResult<T> result;
+    {
+      py::gil_scoped_release release;
+      result = core::cross_validate_classification<T>(
+          predictors.view(), labels.data(), classes, folds.data(),
+          components.data(), components.size(), predictor_scaling,
+          effective_family,
+          head == Head::lda ? core::ClassificationHead::lda :
+                              core::ClassificationHead::argmax,
+          plssvd, simpls, backend, true, need_scores,
+          static_cast<std::size_t>(orthogonal_components), kernel_cv, false);
+    }
+    output["status"] = result.status;
+    output["accuracy"] = result.metrics;
+    output["Q2Y"] = result.q2;
+    output["prediction_index"] = matrix_to_numpy(result.predictions);
+    if (need_scores) {
+      py::list scores;
+      for (const auto& value : result.scores) scores.append(matrix_to_numpy(value));
+      output["scores"] = std::move(scores);
+    }
+  } else {
+    auto response_array = py::array_t<T, py::array::forcecast>::ensure(response);
+    auto responses = matrix_from_numpy<T>(response_array);
+    if (responses.rows() != predictors.rows()) {
+      throw std::invalid_argument("X and y row counts differ");
+    }
+    auto simpls = simpls_controls(
+        predictors.rows(), predictors.columns(), responses.columns(),
+        maximum_component, false, oversample, power,
+        static_cast<unsigned int>(seed));
+    const core::RegressionMetric metric = selection == "q2y" ?
+        core::RegressionMetric::q2 : selection == "r2y" ?
+        core::RegressionMetric::r2 : core::RegressionMetric::rmsd;
+    core::RegressionCvResult<T> result;
+    {
+      py::gil_scoped_release release;
+      result = core::cross_validate_regression<T>(
+          predictors.view(), responses.view(), folds.data(), components.data(),
+          components.size(), predictor_scaling, effective_family, metric,
+          plssvd, simpls, backend, true,
+          static_cast<std::size_t>(orthogonal_components), kernel_cv, false);
+    }
+    output["status"] = result.status;
+    output["Q2Y"] = result.q2;
+    output["R2Y"] = result.observed_r2;
+    output["RMSD"] = result.rmsd;
+    py::list predictions;
+    for (const auto& value : result.predictions) {
+      predictions.append(matrix_to_numpy(value));
+    }
+    output["predictions"] = std::move(predictions);
+  }
+  return output;
+}
+
+py::dict cross_validate(
+    py::array input, py::handle response, py::array components, py::array folds,
+    const std::string& method, const std::string& classifier,
+    const std::string& scaling, const std::string& selection,
+    int oversample, int power, int seed, int orthogonal_components,
+    const std::string& kernel, double gamma, int degree, double offset,
+    bool store_predictions, bool store_scores) {
+  auto component_array =
+      py::array_t<int, py::array::forcecast>::ensure(components);
+  auto fold_array = py::array_t<int, py::array::forcecast>::ensure(folds);
+  if (input.dtype().is(py::dtype::of<float>())) {
+    return cross_validate_typed<float>(
+        py::array_t<float, py::array::forcecast>::ensure(input), response,
+        component_array, fold_array, method, classifier, scaling, selection,
+        oversample, power, seed, orthogonal_components, kernel, gamma, degree,
+        offset, store_predictions, store_scores);
+  }
+  return cross_validate_typed<double>(
+      py::array_t<double, py::array::forcecast>::ensure(input), response,
+      component_array, fold_array, method, classifier, scaling, selection,
+      oversample, power, seed, orthogonal_components, kernel, gamma, degree,
+      offset, store_predictions, store_scores);
+}
+
 }  // namespace
 }  // namespace fastpls_py
 
@@ -749,6 +980,16 @@ PYBIND11_MODULE(_core, module) {
              py::arg("x"), py::arg("n_components"),
              py::arg("oversample") = 32, py::arg("power") = 5,
              py::arg("seed") = 1);
+  module.def("cross_validate", &fastpls_py::cross_validate,
+             py::arg("X"), py::arg("y"), py::arg("components"),
+             py::arg("folds"), py::arg("method"), py::arg("classifier"),
+             py::arg("scaling"), py::arg("selection"),
+             py::arg("oversample") = 32, py::arg("power") = 5,
+             py::arg("seed") = 1, py::arg("orthogonal_components") = 1,
+             py::arg("kernel") = "linear", py::arg("gamma") = 1.0,
+             py::arg("degree") = 3, py::arg("offset") = 1.0,
+             py::arg("store_predictions") = true,
+             py::arg("store_scores") = false);
   module.def("fit", &fastpls_py::fit,
              py::arg("X"), py::arg("y"), py::arg("n_components"),
              py::arg("method"), py::arg("classifier"), py::arg("scaling"),
@@ -760,6 +1001,7 @@ PYBIND11_MODULE(_core, module) {
       .def("predict", &ModelBase::predict)
       .def("predict_scores", &ModelBase::predict_scores)
       .def("predict_classes", &ModelBase::predict_classes)
+      .def("vip", &ModelBase::vip)
       .def_property_readonly("scores", &ModelBase::scores)
       .def_property_readonly("n_components", &ModelBase::components)
       .def_property_readonly("dtype", &ModelBase::dtype)

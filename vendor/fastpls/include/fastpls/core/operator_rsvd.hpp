@@ -32,6 +32,28 @@ struct OperatorRsvdWorkspace {
 
 namespace detail {
 
+template<class T, class Backend>
+auto sample_gram_product(Backend& backend,
+                         ConstMatrixView<T> predictors,
+                         ConstMatrixView<T> sample_gram,
+                         ConstMatrixView<T> direction,
+                         MatrixView<T> output, int)
+    -> decltype(
+      backend.sample_gram_apply(
+        predictors, sample_gram, direction, output
+      ), bool()) {
+  if (direction.columns() != 1 || output.columns() != 1) return false;
+  return backend.sample_gram_apply(
+    predictors, sample_gram, direction, output
+  );
+}
+
+template<class T, class Backend>
+bool sample_gram_product(Backend&, ConstMatrixView<T>, ConstMatrixView<T>,
+                         ConstMatrixView<T>, MatrixView<T>, long) {
+  return false;
+}
+
 template<class Operator, class T>
 auto stabilize_operator_direction(Operator& input, Matrix<T>& direction, int)
     -> decltype(input.stabilize(direction), void()) {
@@ -168,6 +190,167 @@ SingularTriplets<T> finalize_operator_sample(
 }
 
 }  // namespace detail
+
+// Build the left rSVD subspace through C C' = X' (Y Y') X. This avoids
+// repeatedly traversing a very wide response matrix when its centered
+// sample-space Gram matrix is already available. The response side is touched
+// once at finalization to recover singular values and right directions.
+template<class T, class Operator, class Backend>
+SingularTriplets<T> randomized_operator_svd_from_sample_gram(
+    Operator& input, ConstMatrixView<T> predictors,
+    ConstMatrixView<T> sample_gram, int retained,
+    const RsvdControls& controls, Backend& backend,
+    OperatorRsvdWorkspace<T>& workspace) {
+  if (predictors.empty() || sample_gram.rows() != predictors.rows() ||
+      sample_gram.columns() != predictors.rows() ||
+      input.rows() != predictors.columns()) {
+    throw std::invalid_argument(
+      "fastPLS sample-Gram rSVD dimensions are inconsistent"
+    );
+  }
+  const std::size_t maximum = std::min(input.rows(), input.columns());
+  const std::size_t target = std::min(
+    maximum, static_cast<std::size_t>(std::max(retained, 1))
+  );
+  if (target == 0) return {};
+  const std::size_t width = std::min(
+    maximum,
+    target + static_cast<std::size_t>(std::max(controls.oversample, 0))
+  );
+
+  std::mt19937 generator(controls.seed);
+  std::normal_distribution<T> normal(T(0), T(1));
+  workspace.random.resize(input.rows(), width);
+  for (std::size_t index = 0; index < workspace.random.size(); ++index) {
+    workspace.random.data()[index] = normal(generator);
+  }
+
+  const int iterations = std::max(controls.power, 0) + 1;
+  for (int iteration = 0; iteration < iterations; ++iteration) {
+    workspace.forward_basis.resize(input.rows(), width);
+    const bool fused = detail::sample_gram_product<T>(
+      backend, predictors, sample_gram, workspace.random.view(),
+      workspace.forward_basis.view(), 0
+    );
+    if (!fused) {
+      workspace.sample.resize(predictors.rows(), width);
+      backend.gemm(
+        predictors, workspace.random.view(), false, false,
+        workspace.sample.view()
+      );
+      workspace.reverse.resize(predictors.rows(), width);
+      backend.gemm(
+        sample_gram, workspace.sample.view(), false, false,
+        workspace.reverse.view()
+      );
+      backend.gemm(
+        predictors, workspace.reverse.view(), true, false,
+        workspace.forward_basis.view()
+      );
+    }
+    if (!backend.qr_economy(
+          workspace.forward_basis.view(), workspace.reverse_basis)) {
+      throw std::runtime_error(
+        "fastPLS sample-Gram rSVD orthogonalization failed"
+      );
+    }
+    workspace.random = std::move(workspace.reverse_basis);
+  }
+
+  if (controls.left_only) {
+    workspace.forward_basis.resize(input.rows(), width);
+    const bool fused = detail::sample_gram_product<T>(
+      backend, predictors, sample_gram, workspace.random.view(),
+      workspace.forward_basis.view(), 0
+    );
+    if (!fused) {
+      workspace.sample.resize(predictors.rows(), width);
+      backend.gemm(
+        predictors, workspace.random.view(), false, false,
+        workspace.sample.view()
+      );
+      workspace.reverse.resize(predictors.rows(), width);
+      backend.gemm(
+        sample_gram, workspace.sample.view(), false, false,
+        workspace.reverse.view()
+      );
+      backend.gemm(
+        predictors, workspace.reverse.view(), true, false,
+        workspace.forward_basis.view()
+      );
+    }
+    workspace.gram.resize(width, width);
+    backend.gemm(
+      workspace.random.view(), workspace.forward_basis.view(), true, false,
+      workspace.gram.view()
+    );
+    for (std::size_t column = 0; column < width; ++column) {
+      for (std::size_t row = 0; row < column; ++row) {
+        const T average = static_cast<T>(
+          (static_cast<long double>(workspace.gram(row, column)) +
+           static_cast<long double>(workspace.gram(column, row))) / 2.0L
+        );
+        workspace.gram(row, column) = average;
+        workspace.gram(column, row) = average;
+      }
+    }
+    std::vector<T> eigenvalues;
+    if (!backend.symmetric_eigen(workspace.gram, eigenvalues)) {
+      throw std::runtime_error(
+        "fastPLS sample-Gram rSVD reduced eigenproblem failed"
+      );
+    }
+    const std::size_t available = std::min(width, eigenvalues.size());
+    const T largest = available == 0 ? T(0) :
+      std::max(eigenvalues[available - 1], T(0));
+    const T tolerance = std::numeric_limits<T>::epsilon() *
+      static_cast<T>(std::max(input.rows(), input.columns())) * largest;
+    std::size_t usable = 0;
+    while (usable < target && usable < available &&
+           eigenvalues[available - 1 - usable] > tolerance) {
+      ++usable;
+    }
+    if (usable == 0) {
+      throw std::runtime_error(
+        "fastPLS sample-Gram rSVD returned no usable left directions"
+      );
+    }
+    workspace.reduced_left.resize(width, usable);
+    SingularTriplets<T> output;
+    output.singular_values.resize(usable);
+    for (std::size_t column = 0; column < usable; ++column) {
+      const std::size_t source = available - 1 - column;
+      output.singular_values[column] = std::sqrt(
+        std::max(eigenvalues[source], T(0))
+      );
+      for (std::size_t row = 0; row < width; ++row) {
+        workspace.reduced_left(row, column) = workspace.gram(row, source);
+      }
+    }
+    output.U.resize(input.rows(), usable);
+    backend.gemm(
+      workspace.random.view(), workspace.reduced_left.view(), false, false,
+      output.U.view()
+    );
+    return output;
+  }
+
+  input.multiply(workspace.random.view(), true, workspace.reverse);
+  workspace.projected.resize(
+    workspace.reverse.columns(), workspace.reverse.rows()
+  );
+  for (std::size_t column = 0;
+       column < workspace.projected.columns(); ++column) {
+    for (std::size_t row = 0; row < workspace.projected.rows(); ++row) {
+      workspace.projected(row, column) = workspace.reverse(column, row);
+    }
+  }
+  return detail::finalize_operator_sample<T>(
+    ConstMatrixView<T>(workspace.random.view()),
+    ConstMatrixView<T>(workspace.projected.view()), target,
+    controls.left_only, backend, workspace
+  );
+}
 
 // Fresh rank-one subspace iteration avoids the oversampled block workspace
 // when only the next leading direction is required. This is important for

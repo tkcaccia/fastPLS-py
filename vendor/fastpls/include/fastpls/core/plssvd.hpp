@@ -263,7 +263,8 @@ PlssvdModel<T> fit_plssvd_operator(
     ConstMatrixView<T> predictors, Operator& crosscov,
     const int* components, std::size_t component_count,
     const PlssvdControls& controls, Backend& backend,
-    OperatorRsvdWorkspace<T>& workspace) {
+    OperatorRsvdWorkspace<T>& workspace,
+    ConstMatrixView<T> sample_response_gram = ConstMatrixView<T>()) {
   if (predictors.empty() || crosscov.rows() != predictors.columns() ||
       crosscov.columns() == 0 || components == nullptr ||
       component_count == 0) {
@@ -277,9 +278,13 @@ PlssvdModel<T> fit_plssvd_operator(
   );
   RsvdControls rsvd = controls.rsvd;
   rsvd.left_only = false;
-  auto decomposition = randomized_operator_svd<T>(
-    crosscov, static_cast<int>(retained), rsvd, backend, workspace
-  );
+  auto decomposition = sample_response_gram.empty() ?
+    randomized_operator_svd<T>(
+      crosscov, static_cast<int>(retained), rsvd, backend, workspace
+    ) : randomized_operator_svd_from_sample_gram<T>(
+      crosscov, predictors, sample_response_gram,
+      static_cast<int>(retained), rsvd, backend, workspace
+    );
   return assemble_plssvd_model(
     predictors, crosscov.columns(), components, component_count,
     decomposition, backend

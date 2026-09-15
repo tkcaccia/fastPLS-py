@@ -78,6 +78,34 @@ def test_float32_and_float64_agree(data):
     )
 
 
+def test_model_and_component_selection_share_preprocessing_defaults(data):
+    X, Y, _ = data
+    selected = fastpls.pls_single_cv(
+        X, Y, [1, 2], kfold=3, fit=False, seed=19
+    )
+    default_model = fastpls.PLS(
+        n_components=selected["best_ncomp"], seed=19
+    ).fit(X, Y)
+    centered_model = fastpls.PLS(
+        n_components=selected["best_ncomp"], scaling="centering", seed=19
+    ).fit(X, Y)
+    np.testing.assert_array_equal(
+        default_model.predict(X), centered_model.predict(X)
+    )
+
+
+def test_kernel_default_gamma_is_inverse_predictor_count(data):
+    X, Y, _ = data
+    default_model = fastpls.PLS(
+        n_components=2, method="kernelpls", kernel="rbf", seed=23
+    ).fit(X, Y)
+    explicit_model = fastpls.PLS(
+        n_components=2, method="kernelpls", kernel="rbf",
+        gamma=1.0 / X.shape[1], seed=23,
+    ).fit(X, Y)
+    np.testing.assert_array_equal(
+        default_model.predict(X), explicit_model.predict(X)
+    )
 def test_unsupported_accelerator_does_not_fallback(data):
     X, Y, _ = data
     with pytest.raises(ValueError, match="not silently replaced"):
@@ -93,6 +121,38 @@ def test_evaluate_regression_and_classification():
     )
     assert classification["accuracy"] == pytest.approx(0.5)
     assert classification["top_accuracy"] == pytest.approx(1.0)
+    integer_regression = fastpls.evaluate(
+        np.array([1, 2, 3]), np.array([1, 2, 3])
+    )
+    assert integer_regression["task"] == "regression"
+
+
+def test_multivariate_rpd_uses_response_wise_centering():
+    observed = np.array([[0.0, 100.0], [1.0, 101.0], [2.0, 102.0]])
+    predicted = observed + 1.0
+    result = fastpls.evaluate(observed, predicted, bycol=False)
+    centered = observed - observed.mean(axis=0)
+    expected = np.sqrt(np.sum(centered ** 2) / (observed.size - 1))
+    assert result["RPD"] == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("ncomp", [0, 1.5, np.nan, [1, 2.5]])
+def test_component_controls_reject_non_positive_integers(data, ncomp):
+    X, Y, _ = data
+    with pytest.raises(ValueError, match="positive integers|positive integer"):
+        if isinstance(ncomp, list):
+            fastpls.pls_single_cv(X, Y, ncomp, kfold=3)
+        else:
+            fastpls.PLS(n_components=ncomp).fit(X, Y)
+
+
+def test_stratified_folds_reject_empty_validation_folds():
+    X = np.arange(30.0).reshape(6, 5)
+    labels = np.array(["a", "a", "a", "b", "b", "b"])
+    with pytest.raises(ValueError, match="cannot populate every fold"):
+        fastpls.pls_single_cv(
+            X, labels, [1], kfold=5, classifier="lda", fit=False
+        )
 
 
 def test_regression_rejects_top(data):
@@ -100,6 +160,48 @@ def test_regression_rejects_top(data):
     model = fastpls.PLS(n_components=2).fit(X[:90], Y[:90])
     with pytest.raises(ValueError, match="only for classification"):
         model.predict(X[90:], top=2)
+
+
+def test_pls_evaluates_an_independent_test_set(data):
+    X, Y, labels = data
+    regression = fastpls.pls(X[:90], Y[:90], X[90:], Y[90:], n_components=2)
+    assert regression["metrics"]["task"] == "regression"
+    assert np.isfinite(regression["metrics"]["Q2"])
+    classification = fastpls.pls(
+        X[:90], labels[:90], X[90:], labels[90:],
+        n_components=2, classifier="lda", top=2,
+    )
+    assert classification["prediction"].shape == (30, 2)
+    assert classification["metrics"]["task"] == "classification"
+
+
+def test_explicit_classifier_supports_numeric_labels(data):
+    X, _, labels = data
+    numeric = np.unique(labels, return_inverse=True)[1]
+    result = fastpls.pls(
+        X[:90], numeric[:90], X[90:], numeric[90:],
+        n_components=2, classifier="lda",
+    )
+    assert result["metrics"]["task"] == "classification"
+
+
+@pytest.mark.parametrize(
+    ("keyword", "value"),
+    [("method", "unknown"), ("classifier", "knn"),
+     ("scaling", "unit"), ("kernel", "sigmoid")],
+)
+def test_model_rejects_unknown_algorithm_controls(data, keyword, value):
+    X, Y, _ = data
+    arguments = {keyword: value}
+    with pytest.raises(ValueError, match=keyword):
+        fastpls.PLS(**arguments).fit(X, Y)
+
+
+@pytest.mark.parametrize("value", [0, 1.5, np.nan])
+def test_fastsvd_rejects_invalid_component_count(data, value):
+    X, _, _ = data
+    with pytest.raises(ValueError, match="n_components"):
+        fastpls.fastsvd(X, value)
 
 
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
@@ -115,6 +217,105 @@ def test_fastsvd_reconstructs_low_rank_matrix(dtype):
 
 def test_fastcor_and_capability_flags(data):
     X, _, _ = data
-    np.testing.assert_allclose(fastpls.fastcor(X), np.corrcoef(X, rowvar=False))
+    np.testing.assert_allclose(fastpls.fastcor(X), np.corrcoef(X))
+    np.testing.assert_allclose(
+        fastpls.fastcor(X, byrow=False), np.corrcoef(X, rowvar=False)
+    )
+    np.testing.assert_allclose(
+        fastpls.fastcor(X[:4], X[4:8], diag=False),
+        np.corrcoef(X[:8])[:4, 4:8],
+    )
+    np.testing.assert_allclose(
+        fastpls.fastcor(X[:4], X[4:8]),
+        np.diag(np.corrcoef(X[:8])[:4, 4:8]),
+    )
     assert fastpls.has_cuda() is False
     assert fastpls.has_metal() is False
+
+
+def test_integer_regression_is_not_misclassified():
+    result = fastpls.evaluate([1, 2, 3], [1.1, 2.1, 2.9])
+    assert result["task"] == "regression"
+    assert result["RMSD"] == pytest.approx(0.1)
+
+
+@pytest.mark.parametrize("method", ["simpls", "plssvd", "opls", "kernelpls"])
+@pytest.mark.parametrize("classifier", ["argmax", "lda"])
+def test_single_cv_covers_every_family_and_classifier(data, method, classifier):
+    X, _, labels = data
+    kwargs = {"kernel": "rbf", "gamma": 0.1} if method == "kernelpls" else {}
+    result = fastpls.pls_single_cv(
+        X, labels, [1, 2], kfold=3, method=method, classifier=classifier,
+        selection="balanced_accuracy", seed=11, fit=False, **kwargs,
+    )
+    assert result["best_ncomp"] in (1, 2)
+    assert result["pred"][0].shape == (X.shape[0],)
+    assert np.isfinite(result["best_metric_value"])
+    assert np.all(result["status"] == 1)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("method", ["simpls", "plssvd", "opls", "kernelpls"])
+def test_single_cv_multivariate_regression(data, dtype, method):
+    X, Y, _ = data
+    kwargs = {"kernel": "rbf", "gamma": 0.1} if method == "kernelpls" else {}
+    result = fastpls.pls_single_cv(
+        X.astype(dtype), Y.astype(dtype), [1, 2], kfold=3,
+        selection="RMSD", fit=False, seed=11, method=method, **kwargs,
+    )
+    assert result["best_ncomp"] in (1, 2)
+    assert np.all(np.isfinite(result["RMSD"]))
+    assert result["pred"][0].shape == Y.shape
+
+
+def test_grouped_double_cv_and_corrected_permutation(data):
+    X, _, labels = data
+    groups = np.repeat(np.arange(40), 3)
+    result = fastpls.pls_double_cv(
+        X, labels, [1, 2], constrain=groups, runn=1,
+        kfold_inner=2, kfold_outer=2, classifier="lda",
+        selection="balanced_accuracy", perm_test=True, times=2, seed=11,
+    )
+    assert result["Ypred"].shape == labels.shape
+    assert 0 < result["p_value"] <= 1
+    assert result["permutation_requested"] == 2
+    assert result["permutation_unit"] == "exchangeability blocks"
+
+
+@pytest.mark.parametrize("selection", ["Q2Y", "R2Y"])
+def test_double_cv_response_metric_selection_is_finite(data, selection):
+    X, Y, _ = data
+    result = fastpls.pls_double_cv(
+        X, Y, [1, 2], runn=1, kfold_inner=2, kfold_outer=2,
+        selection=selection, seed=13,
+    )
+    assert np.isfinite(result[selection]).all()
+    assert np.isfinite(result["results"][0][selection])
+    assert np.isfinite(result["results"][0]["metric_value"])
+
+
+def test_vip_requires_scores_and_covers_responses(data):
+    X, Y, _ = data
+    compact = fastpls.PLS(n_components=2).fit(X, Y)
+    with pytest.raises(ValueError, match="store_scores"):
+        compact.vip()
+    stored = fastpls.PLS(n_components=2, store_scores=True).fit(X, Y)
+    values = stored.vip()
+    assert isinstance(values, list)
+    assert len(values) == Y.shape[1]
+    assert values[0].shape == (2, X.shape[1])
+
+
+def test_plot_permutation_returns_requested_axes():
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots()
+    returned = fastpls.plot_permutation({
+        "permutation_sampled": np.array([0.2, 0.3]),
+        "permutation_observed": 0.8,
+        "permutation_metric": "accuracy",
+    }, ax=axes)
+    assert returned is axes
+    plt.close(figure)

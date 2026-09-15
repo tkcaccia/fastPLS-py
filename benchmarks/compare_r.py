@@ -38,9 +38,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--r-library", type=Path, default=Path("/tmp/fastPLS-r-lib"))
     parser.add_argument("--repetitions", type=int, default=11)
+    parser.add_argument(
+        "--precision", choices=("float32", "float64"), default="float64"
+    )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     Xtrain, Xtest, Ytrain, labels = make_data()
+    dtype = np.float32 if args.precision == "float32" else np.float64
+    Xtrain = np.asfortranarray(Xtrain.astype(dtype))
+    Xtest = np.asfortranarray(Xtest.astype(dtype))
+    Ytrain = np.asfortranarray(Ytrain.astype(dtype))
     records = []
     with tempfile.TemporaryDirectory(prefix="fastpls-parity-") as temporary:
         root = Path(temporary)
@@ -56,22 +63,30 @@ def main() -> int:
                 str(root),
                 str(args.r_library),
                 str(args.repetitions),
+                args.precision,
             ],
             check=True,
         )
-        for method in ("simpls", "plssvd"):
+        r_version = (root / "r_version.txt").read_text().strip()
+        for method in ("simpls", "plssvd", "opls", "kernelpls"):
             timings = []
             prediction = None
             for _ in range(args.repetitions):
                 started = time.perf_counter()
-                model = PLS(n_components=8, method=method, seed=17).fit(Xtrain, Ytrain)
+                model = PLS(
+                    n_components=8, method=method, seed=17,
+                    scaling="centering",
+                    kernel="rbf", gamma=0.1, orthogonal_components=1,
+                ).fit(Xtrain, Ytrain)
                 prediction = model.predict(Xtest)
                 timings.append(time.perf_counter() - started)
             r_prediction = np.loadtxt(
                 root / f"r_{method}_regression.csv", delimiter=",", skiprows=1
             )
             labels_model = PLS(
-                n_components=8, method=method, classifier="lda", seed=17
+                n_components=8, method=method, classifier="lda", seed=17,
+                scaling="centering",
+                kernel="rbf", gamma=0.1, orthogonal_components=1,
             ).fit(Xtrain, labels)
             python_labels = labels_model.predict(Xtest)
             r_labels = np.loadtxt(root / f"r_{method}_labels.txt", dtype=str)
@@ -97,13 +112,18 @@ def main() -> int:
                             * 0.013
                         ) / Xtest.shape[1],
                         prediction,
-                    ),
+                        bycol=False,
+                    )["metrics"],
                 }
             )
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "UPSTREAM_CORE.json").read_text()
+    )
     output = {
-        "fastpls_r_version": "0.99.66",
-        "fastpls_core_commit": "3854e369c1f0cd615e58b968b7721efb4b2a3146",
+        "fastpls_r_version": r_version,
+        "fastpls_core_commit": manifest["commit"],
         "repetitions": args.repetitions,
+        "precision": args.precision,
         "records": records,
     }
     rendered = json.dumps(output, indent=2)

@@ -1,7 +1,7 @@
 {
   "repository": "https://github.com/tkcaccia/fastPLS",
-  "commit": "3854e369c1f0cd615e58b968b7721efb4b2a3146",
-  "package_version": "0.99.66",
+  "commit": "8ab834154a985bfa94971bcfde0987350e30d08e",
+  "package_version": "0.3",
   "source_path": "inst/include/fastpls",
   "license": "MIT"
 }
