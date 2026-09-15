@@ -19,7 +19,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Build pinned Lean project
         uses: leanprover/lean-action@38fbc41a8c28c4cbaec22d7f7de508ec2e7c0dd9
         with:
@@ -29,5 +29,5 @@ jobs:
           test: false
           lint: false
           use-mathlib-cache: true
-          axiom-audit: true
-          axiom-audit-root: FastPLSFormal
+          nanoda: true
+          nanoda-allow-sorry: false
