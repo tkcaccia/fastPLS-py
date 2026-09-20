@@ -27,6 +27,45 @@ struct LdaModel {
   T relative_ridge = T(0);
 };
 
+template<class T>
+LdaModel<T> lda_prior_only_model(const std::vector<T>& counts,
+                                 std::size_t sample_count) {
+  if (counts.size() < 2 || sample_count < 1) {
+    throw std::invalid_argument(
+      "fastPLS prior-only LDA requires two classes and training samples"
+    );
+  }
+  LdaModel<T> model;
+  model.means.resize(counts.size(), 0);
+  model.linear.resize(counts.size(), 0);
+  model.constants.resize(counts.size());
+  model.priors.resize(counts.size());
+  T total = T(0);
+  for (const T count : counts) {
+    if (!std::isfinite(count) || count <= T(0)) {
+      throw std::invalid_argument(
+        "fastPLS prior-only LDA received an empty class"
+      );
+    }
+    total += count;
+  }
+  const T expected = static_cast<T>(sample_count);
+  if (std::abs(total - expected) >
+      T(1e-6) * std::max(T(1), expected)) {
+    throw std::invalid_argument(
+      "fastPLS prior-only LDA class counts do not sum to n"
+    );
+  }
+  for (std::size_t class_index = 0;
+       class_index < counts.size(); ++class_index) {
+    model.priors[class_index] = counts[class_index] / total;
+    model.constants[class_index] = std::log(std::max(
+      model.priors[class_index], std::numeric_limits<T>::min()
+    ));
+  }
+  return model;
+}
+
 namespace detail {
 
 template<class T, class Solver>
@@ -391,7 +430,7 @@ std::vector<LdaModel<T>> train_lda_prefixes_from_moments(
 
 template<class T>
 Matrix<T> lda_scores(ConstMatrixView<T> scores, const LdaModel<T>& model) {
-  if (scores.empty() || scores.columns() != model.linear.columns() ||
+  if (scores.rows() == 0 || scores.columns() != model.linear.columns() ||
       model.linear.rows() != model.constants.size()) {
     throw std::invalid_argument("fastPLS LDA prediction dimensions are invalid");
   }

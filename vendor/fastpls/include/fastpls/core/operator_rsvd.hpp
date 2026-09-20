@@ -303,8 +303,11 @@ SingularTriplets<T> randomized_operator_svd_from_sample_gram(
     const std::size_t available = std::min(width, eigenvalues.size());
     const T largest = available == 0 ? T(0) :
       std::max(eigenvalues[available - 1], T(0));
-    const T tolerance = std::numeric_limits<T>::epsilon() *
-      static_cast<T>(std::max(input.rows(), input.columns())) * largest;
+    const T relative_tolerance = std::numeric_limits<T>::epsilon() *
+      static_cast<T>(std::max(input.rows(), input.columns()));
+    // These are eigenvalues of S S', hence squared singular values of S.
+    const T tolerance = largest > T(0) ?
+      relative_tolerance * relative_tolerance * largest : T(0);
     std::size_t usable = 0;
     while (usable < target && usable < available &&
            eigenvalues[available - 1 - usable] > tolerance) {

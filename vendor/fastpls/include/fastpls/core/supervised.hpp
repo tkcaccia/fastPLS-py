@@ -22,6 +22,7 @@ struct DensePreprocessingResult {
   std::vector<T> predictor_center;
   std::vector<T> predictor_scale;
   std::vector<T> response_mean;
+  std::vector<unsigned char> response_constant;
 };
 
 template<class T, class Backend>
@@ -49,12 +50,16 @@ DensePreprocessingResult<T> scaled_dense_crossprod_impl(
   result.predictor_center.assign(predictors.columns(), T(0));
   result.predictor_scale.assign(predictors.columns(), T(1));
   result.response_mean.assign(responses.columns(), T(0));
+  result.response_constant.assign(responses.columns(), 1);
   std::vector<T> predictor_sums(predictors.columns(), T(0));
 
   for (std::size_t response = 0; response < responses.columns(); ++response) {
     T sum = T(0);
+    const T first = responses(0, response);
     for (std::size_t sample = 0; sample < responses.rows(); ++sample) {
-      sum += responses(sample, response);
+      const T value = responses(sample, response);
+      sum += value;
+      if (value != first) result.response_constant[response] = 0;
     }
     result.response_mean[response] =
       sum / static_cast<T>(responses.rows());
@@ -115,8 +120,10 @@ DensePreprocessingResult<T> scaled_dense_crossprod_impl(
          response < responses.columns(); ++response) {
       for (std::size_t predictor = 0;
            predictor < predictors.columns(); ++predictor) {
-        result.crossprod(predictor, response) -=
-          predictor_sums[predictor] * result.response_mean[response];
+        result.crossprod(predictor, response) =
+          result.response_constant[response] ? T(0) :
+          result.crossprod(predictor, response) -
+            predictor_sums[predictor] * result.response_mean[response];
       }
     }
   }

@@ -103,11 +103,18 @@ SingularTriplets<T> finalize_sample(ConstMatrixView<T> input,
     );
     std::vector<T> eigenvalues;
     if (backend.symmetric_eigen(gram, eigenvalues)) {
-      const T largest = eigenvalues.empty() ? T(1) :
-        std::max(eigenvalues.back(), T(1));
-      const T tolerance = std::numeric_limits<T>::epsilon() *
-        static_cast<T>(std::max(projected.rows(), projected.columns())) *
-        largest;
+      const T largest = eigenvalues.empty() ? T(0) :
+        std::max(eigenvalues.back(), T(0));
+      const T dimension = static_cast<T>(
+        std::max(projected.rows(), projected.columns())
+      );
+      const T relative_tolerance =
+        std::numeric_limits<T>::epsilon() * dimension;
+      // The eigenvalues of B B' are squared singular values. Apply the
+      // singular-value rank tolerance on the same squared scale and retain
+      // scale invariance for inputs whose norm is smaller than one.
+      const T tolerance = largest > T(0) ?
+        relative_tolerance * relative_tolerance * largest : T(0);
       std::size_t usable = 0;
       for (std::size_t index = eigenvalues.size(); index > 0; --index) {
         if (eigenvalues[index - 1] <= tolerance || usable == retained) break;

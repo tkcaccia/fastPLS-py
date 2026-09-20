@@ -498,9 +498,11 @@ bool sample_gram_direction(
 
 }  // namespace simpls_detail
 
-// Fits the sequential SIMPLS estimator from an already preprocessed predictor
-// matrix and its predictor-response cross-covariance. Centering, scaling and
-// response encoding remain boundary-layer responsibilities.
+// Fits the sequential SIMPLS-family estimator from an already preprocessed
+// predictor matrix and its predictor-response cross-covariance. A bounded
+// candidate block is approximate because its directions share one deflated
+// state. Centering, scaling and response encoding remain boundary-layer
+// responsibilities.
 template<class T, class Backend>
 SimplsModel<T> fit_simpls_preprocessed(
     ConstMatrixView<T> predictors,
@@ -822,9 +824,10 @@ SimplsModel<T> fit_simpls_preprocessed(
   return model;
 }
 
-// Fits SIMPLS through a predictor-response operator. The initial operator is
-// retained for response loadings, while the projected operator accumulates the
-// orthogonal SIMPLS deflations without materializing the cross-covariance.
+// Fits the SIMPLS-family estimator through a predictor-response operator. The
+// initial operator is retained for response loadings, while the projected
+// operator accumulates orthogonal SIMPLS deflations without materializing the
+// cross-covariance.
 template<class T, class InitialOperator, class ProjectedOperator,
          class Backend>
 SimplsModel<T> fit_simpls_operator(

@@ -4,7 +4,7 @@
 
 - Wrapper version: 0.2.0
 - Shared fastPLS R core version: 0.3
-- Shared core commit: `1e51cdb3ff6dc09b497ff9b19869d43479157dee`
+- Shared core commit: `91811067223ee9b440e8269b6d6957869a0c04b0`
 - Platform: macOS arm64
 - CPU linear algebra: Apple Accelerate
 
@@ -13,12 +13,13 @@ recorded R source.
 
 ## Automated tests
 
-`python -m pytest -q` completed with 71 passed tests and one skipped optional
+`python -m pytest -q` completed with 75 passed tests and one skipped optional
 Matplotlib rendering test because Matplotlib was not installed. The suite covers all four
 PLS families, float32 and float64, regression, argmax and LDA classification,
 ranked prediction, rSVD, row- and column-wise correlation, independent-test
 evaluation, single and nested cross-validation, grouped permutation testing,
-and VIP output.
+VIP output, and intercept-only prediction when a SIMPLS-family fit has zero
+effective directions.
 
 The source distribution was rebuilt as a wheel successfully. A clean virtual
 environment loaded version 0.2.0 from that wheel and completed a compiled
@@ -31,9 +32,9 @@ float32 record is in `benchmarks/parity_macos_arm64_v0.2.0_float32.json`.
 
 | Family | Float64 maximum difference | Float32 maximum difference | LDA agreement |
 |---|---:|---:|---:|
-| SIMPLS | 1.56e-16 | 5.96e-08 | 100% |
+| SIMPLS | 2.15e-16 | 6.71e-08 | 100% |
 | PLS-SVD | 4.34e-16 | 1.98e-07 | 100% |
-| OPLS | 3.26e-16 | 1.60e-07 | 100% |
+| OPLS | 3.19e-16 | 2.07e-07 | 100% |
 | Kernel PLS | 6.59e-17 | 1.86e-09 | 100% |
 
 These results establish agreement for the recorded arrays and controls. They

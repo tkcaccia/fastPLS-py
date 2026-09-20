@@ -3,7 +3,9 @@
 `fastPLS-py` is the Python interface to the same MIT-licensed C++17 numerical
 core used by the [`fastPLS`](https://github.com/tkcaccia/fastPLS) R package.
 It provides NumPy-compatible float32 and float64 fitting and prediction for
-SIMPLS, PLS-SVD, OPLS, and linear, radial-basis, or polynomial kernel PLS.
+the fastPLS SIMPLS-family estimator, PLS-SVD, OPLS, and linear, radial-basis,
+or polynomial kernel PLS. The public `method="simpls"` name may use a bounded
+candidate block; that route is not unqualified classical de Jong SIMPLS.
 Classification supports argmax and pooled-covariance LDA prediction heads.
 
 The vendored core is pinned in `UPSTREAM_CORE.json`; `tools/check_core.py`
@@ -80,6 +82,15 @@ Version 0.2.0 validates the shared portable CPU core on float32 and float64.
 Requests for CUDA or Metal fail explicitly instead of silently switching to
 CPU. The accelerator adapters in the R package are platform-specific runtime
 layers and are not yet part of this Python distribution.
+
+## Related repositories
+
+- [`fastPLS`](https://github.com/tkcaccia/fastPLS): R package and canonical
+  MIT-licensed C++ core.
+- [`fastPLS-extra`](https://github.com/tkcaccia/fastPLS-extra): publication
+  benchmarks, validation workflows, figures, and tables.
+- [`fastPLS-matlab`](https://github.com/tkcaccia/fastPLS-matlab): MATLAB
+  interface to the same C++ core.
 
 ## Development
 

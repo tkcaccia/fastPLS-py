@@ -126,7 +126,7 @@ bool pivoted_solve(ConstMatrixView<T> matrix,
     }
   }
   const T tolerance = std::numeric_limits<T>::epsilon() *
-    static_cast<T>(std::max<std::size_t>(size, 1)) * std::max(scale, T(1));
+    static_cast<T>(std::max<std::size_t>(size, 1)) * scale;
   for (std::size_t pivot = 0; pivot < size; ++pivot) {
     std::size_t selected = pivot;
     for (std::size_t row = pivot + 1; row < size; ++row) {

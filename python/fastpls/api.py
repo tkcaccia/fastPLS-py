@@ -103,6 +103,7 @@ class PLS:
             bool(self.store_scores),
         )
         self.n_features_in_ = X_array.shape[1]
+        self.requested_n_components_ = components
         self.n_components_ = self._native.n_components
         self.scores_ = self._native.scores if self.store_scores else None
         self.dtype_ = X_array.dtype

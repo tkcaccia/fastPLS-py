@@ -64,6 +64,20 @@ def test_fixed_seed_is_repeatable(data):
     np.testing.assert_array_equal(first.predict(X[90:]), second.predict(X[90:]))
 
 
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("value", [0.0, 2.5])
+def test_constant_response_returns_intercept_only_model(dtype, value):
+    rng = np.random.default_rng(81)
+    X = np.asfortranarray(rng.normal(size=(41, 30)).astype(dtype))
+    y = np.full(41, value, dtype=dtype)
+    model = fastpls.PLS(n_components=10, seed=20261542).fit(X, y)
+    prediction = model.predict(X[:7])
+    assert model.requested_n_components_ == 10
+    assert model.n_components_ == 0
+    assert prediction.shape == (7, 1)
+    np.testing.assert_array_equal(prediction, np.full((7, 1), value, dtype=dtype))
+
+
 def test_float32_and_float64_agree(data):
     X, Y, _ = data
     model32 = fastpls.PLS(n_components=3, seed=17).fit(
