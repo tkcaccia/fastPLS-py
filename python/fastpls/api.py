@@ -46,7 +46,7 @@ class PLS:
         backend = str(self.backend).lower()
         if backend != "cpu":
             raise ValueError(
-                "fastPLS-py 0.2 provides only the portable CPU backend; "
+                "fastPLS-py 0.3 provides only the portable CPU backend; "
                 "CUDA and Metal are not silently replaced by CPU"
             )
         X_array = _matrix(X)
@@ -75,8 +75,9 @@ class PLS:
             raise ValueError("gamma must be finite and positive")
         y_array = np.asarray(y)
         self.classes_ = None
-        classification = classifier is not None
+        classification = _classification_target(y_array, classifier)
         if classification:
+            classifier = classifier or "lda"
             if y_array.ndim != 1:
                 y_array = y_array.reshape(-1)
             self.classes_, encoded = np.unique(y_array, return_inverse=True)
@@ -229,6 +230,20 @@ def fastcor(
 def has_cuda() -> bool:
     """Return whether this build contains the CUDA runtime adapter."""
     return False
+
+
+def cuda_info() -> dict[str, Any]:
+    """Describe CUDA support in this CPU-only Python distribution."""
+    return {
+        "status": "unavailable",
+        "compiled": False,
+        "available": False,
+        "diagnostic_only": False,
+        "device_count": 0,
+        "runtime_version": None,
+        "driver_version": None,
+        "no_cpu_fallback": True,
+    }
 
 
 def has_metal() -> bool:
@@ -595,7 +610,7 @@ def pls_single_cv(
             y = y.reshape(-1)
         classes, encoded = np.unique(y, return_inverse=True)
         native_y: Any = np.asarray(encoded, dtype=np.int64)
-        classifier = classifier or "argmax"
+        classifier = classifier or "lda"
     else:
         classes = None
         native_y = _matrix(y, dtype=X.dtype)
@@ -776,7 +791,7 @@ def pls_double_cv(
                 model = PLS(
                     n_components=selected_component,
                     method=kwargs.get("method", "simpls"),
-                    classifier=(kwargs.get("classifier") or "argmax") if classification else None,
+                    classifier=(kwargs.get("classifier") or "lda") if classification else None,
                     scaling=kwargs.get("scaling", "centering"),
                     backend=kwargs.get("backend", "cpu"),
                     oversample=kwargs.get("oversample", 32),

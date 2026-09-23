@@ -1,10 +1,10 @@
-# Validation record for fastPLS-py 0.2.0
+# Validation record for fastPLS-py 0.3.0
 
 ## Evaluated source
 
-- Wrapper version: 0.2.0
+- Wrapper version: 0.3.0
 - Shared fastPLS R core version: 0.3
-- Shared core commit: `91811067223ee9b440e8269b6d6957869a0c04b0`
+- Shared core commit: `82bbc48a0d69e4bd0d7c261fdcc8e636694133b1`
 - Platform: macOS arm64
 - CPU linear algebra: Apple Accelerate
 
@@ -13,7 +13,7 @@ recorded R source.
 
 ## Automated tests
 
-`python -m pytest -q` completed with 75 passed tests and one skipped optional
+`python -m pytest -q` completed with 76 passed tests and one skipped optional
 Matplotlib rendering test because Matplotlib was not installed. The suite covers all four
 PLS families, float32 and float64, regression, argmax and LDA classification,
 ranked prediction, rSVD, row- and column-wise correlation, independent-test
@@ -22,8 +22,9 @@ VIP output, and intercept-only prediction when a SIMPLS-family fit has zero
 effective directions.
 
 The source distribution was rebuilt as a wheel successfully. A clean virtual
-environment loaded version 0.2.0 from that wheel and completed a compiled
-three-fold LDA component-selection smoke test.
+environment loaded version 0.3.0 from that wheel and reran the complete suite.
+The additional test verifies default LDA classification and explicit
+CUDA-unavailable metadata without CPU fallback.
 
 ## R interface agreement
 
@@ -44,5 +45,5 @@ validation on other operating systems.
 ## Current limitation
 
 The Python package exposes the complete portable CPU workflow. CUDA and Metal
-adapters are not included in version 0.2.0; requesting either backend fails
+adapters are not included in version 0.3.0; requesting either backend fails
 explicitly rather than changing to CPU.

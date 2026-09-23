@@ -2,6 +2,7 @@
 
 from .api import (
     PLS,
+    cuda_info,
     evaluate,
     fastcor,
     fastsvd,
@@ -18,6 +19,7 @@ from ._core import backend_info
 __all__ = [
     "PLS",
     "backend_info",
+    "cuda_info",
     "evaluate",
     "fastcor",
     "fastsvd",
@@ -29,4 +31,4 @@ __all__ = [
     "pls_single_cv",
     "vip",
 ]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

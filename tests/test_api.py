@@ -245,6 +245,28 @@ def test_fastcor_and_capability_flags(data):
     )
     assert fastpls.has_cuda() is False
     assert fastpls.has_metal() is False
+    assert fastpls.cuda_info() == {
+        "status": "unavailable",
+        "compiled": False,
+        "available": False,
+        "diagnostic_only": False,
+        "device_count": 0,
+        "runtime_version": None,
+        "driver_version": None,
+        "no_cpu_fallback": True,
+    }
+
+
+def test_label_classification_defaults_to_lda(data):
+    X, _, labels = data
+    default = fastpls.PLS(n_components=2, seed=31).fit(X[:90], labels[:90])
+    explicit = fastpls.PLS(
+        n_components=2, classifier="lda", seed=31
+    ).fit(X[:90], labels[:90])
+    assert default._native.classifier == "lda"
+    np.testing.assert_array_equal(
+        default.predict(X[90:]), explicit.predict(X[90:])
+    )
 
 
 def test_integer_regression_is_not_misclassified():

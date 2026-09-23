@@ -36,7 +36,8 @@ prediction = model.predict(X[150:])
 print(evaluate(y[150:], prediction[:, 0]))
 ```
 
-For classification, set `classifier="argmax"` or `classifier="lda"`. Numeric
+Label-like responses use `classifier="lda"` by default; set
+`classifier="argmax"` to use PLS-DA response-score decoding instead. Numeric
 responses are treated as regression unless a classifier is requested explicitly.
 Calling
 `predict(X, top=5)` returns the five ranked class labels for each sample.
@@ -78,10 +79,12 @@ See `VALIDATION.md` for the exact test scope and current limitations.
 
 ## Backend status
 
-Version 0.2.0 validates the shared portable CPU core on float32 and float64.
+Version 0.3.0 validates the shared portable CPU core on float32 and float64.
 Requests for CUDA or Metal fail explicitly instead of silently switching to
-CPU. The accelerator adapters in the R package are platform-specific runtime
-layers and are not yet part of this Python distribution.
+CPU. `cuda_info()` reports this distribution as CUDA-unavailable with
+`no_cpu_fallback=True`. The accelerator adapters in the R package are
+platform-specific runtime layers and are not yet part of this Python
+distribution.
 
 ## Related repositories
 
